@@ -115,14 +115,16 @@ TimeMax = 0
 Temperature = []
 DewPoint    = []
 Humidity    = []
-Speed       = []
+WindSpeed   = []
 Direction   = []
 Rain        = []
-Total       = []
+RainTotal   = []
 Tau         = []
 
 TempMin = 0
 TempMax = 0
+WindMax = 0
+RainMax = 0
 
 #----------------------------------------------------------------------
 # database support.  we are currently using postgresql, but with minor
@@ -141,14 +143,18 @@ DbName = 'weather'
 #----------------------------------------------------------------------
 
 def LoadData(Quarter, Quarters):
-  global Labels, Time, Temperature, DewPoint, QuarterCount
-  global TempMin, TempMax, TimeMin, TimeMax, QuarterMin
-  global StartQuarter, QuarterMax
+  global Labels, Time, Temperature, DewPoint, WindSpeed
+  global Rain, RainTotal, QuarterCount
+  global TempMin, TempMax, RainMax, WindMax, TimeMin, TimeMax
+  global QuarterMin, StartQuarter, QuarterMax
   CalibrateTimeTicks(StartQuarter, Quarters)
   Labels      = []
   Time        = []
   Temperature = []
   DewPoint    = []
+  WindSpeed   = []
+  Rain        = []
+  RainTotal   = []
   QuarterMin = QuarterMax = 0
   DbConnection = psycopg2.connect('dbname=weather')
   DbCursor = DbConnection.cursor(cursor_factory=psycopg2.extras.DictCursor)
@@ -167,22 +173,28 @@ def LoadData(Quarter, Quarters):
     Temperature.append(Row['temp_f'        ])
     DewPoint   .append(Row['dewpoint_f'    ])
     Humidity   .append(Row['humidity_pct'  ])
-    Speed      .append(Row['wind_mph'      ])
+    WindSpeed  .append(Row['wind_mph'      ])
     Direction  .append(Row['wind_direction'])
     Rain       .append(Row['rain_in'       ])
-    Total      .append(Row['rain_day_in'   ])
+    RainTotal  .append(Row['rain_day_in'   ])
     Tau        .append(Row['tau_status'    ])
   if Temperature:
     TempMax = Temperature[0]
     TempMin = DewPoint   [0]
+    WindMax = WindSpeed  [0]
+    RainMax = RainTotal  [0]
     TimeMin = TimeMax = Time[0]
     for i in range(1,len(Temperature)):
       TempMax = max(TempMax, Temperature[i])
       TempMin = min(TempMin, DewPoint   [i])
+      WindMax = max(WindMax, WindSpeed  [i])
+      RainMax = max(RainMax, RainTotal  [i])
       TimeMax = max(TimeMin, Time       [i])
       TimeMin = min(TimeMin, Time       [i])
-    TempMax = ((round(TempMax)/5)+1) * 5
-    TempMin = ((round(TempMin)/5)-2) * 5
+    TempMax = ((round(TempMax      ) / 5.0) + 1.0) * 5.0
+    TempMin = ((round(TempMin      ) / 5.0) - 2.0) * 5.0
+    WindMax = ((round(WindMax      ) / 5.0) + 1.0) * 5.0
+    RainMax = ( round(RainMax * 2.0)        + 1.0) * 0.5
     StartQuarter = QuarterMin
     QuarterCount = QuarterMax - QuarterMin + 1
   else:
@@ -196,7 +208,7 @@ def LoadData(Quarter, Quarters):
 
 def PlotTemperature(PlotIndex):
 
-  # logical grid has two rows and 1 column.
+  # logical grid has 1 column
 
   plt.subplot((Graphics * 100) + 11 + PlotIndex)
 
@@ -221,14 +233,14 @@ def PlotTemperature(PlotIndex):
 
   # make some graphics color blocks for use in the legend.
 
-  red_patch   = patches.Patch(color='red'  , label=u'Temperature (°F)')
-  green_patch = patches.Patch(color='green', label=  u'Dew Point (°F)')
+  patch1 = patches.Patch(color='red'  , label=u'Temperature (°F)')
+  patch2 = patches.Patch(color='green', label=  u'Dew Point (°F)')
 
   # display the legend on one line in lower right with no frame using
   # the red and green color blocks we created above as markers instead
   # of the default lines.
 
-  plt.legend(loc='lower right', frameon=False, ncol=2, handles=[red_patch,green_patch])
+  plt.legend(loc='lower right', frameon=False, ncol=2, handles=[patch1,patch2])
 
   # turn off the top and right borders of the figure.
 
@@ -237,7 +249,103 @@ def PlotTemperature(PlotIndex):
 
   # turn off ticks on the bottom axis.
 
-  plt.tick_params(bottom='off')
+  plt.tick_params(bottom=False)
+
+#----------------------------------------------------------------------
+# plot the wind speed
+#----------------------------------------------------------------------
+
+def PlotWind(PlotIndex):
+
+  # logical grid has 1 column
+
+  plt.subplot((Graphics * 100) + 11 + PlotIndex)
+
+  # plot temperature in red and dew point in green.  Don't specify any
+  # labels here, we will do that in the legend definitions below.
+
+  plt.plot(Time, WindSpeed, 'b-', linewidth=1.0)
+
+  # the xticks literals need to align with the time list (same
+  # number of elements).  Used empty strings to skip labels.
+
+  if Labels:
+    plt.xticks(Time,Labels)
+
+  if LabelText:
+    plt.xlabel(LabelText)
+
+  # define the range of time and temperature axis
+
+  plt.axis([TimeMin, TimeMax, 0, WindMax])
+
+  # make a graphics color blocks for use in the legend
+
+  patch1 = patches.Patch(color='blue', label=u'Wind Speed (mph)')
+
+  # display the legend on one line in lower right with no frame using
+  # the red and green color blocks we created above as markers instead
+  # of the default lines.
+
+  plt.legend(loc='lower right', frameon=False, ncol=2, handles=[patch1])
+
+  # turn off the top and right borders of the figure
+
+  plt.gca().spines.values()[1].set_visible(False) # right
+  plt.gca().spines.values()[3].set_visible(False) # top
+
+  # turn off ticks on the bottom axis
+
+  plt.tick_params(bottom=False)
+
+#----------------------------------------------------------------------
+# plot the hourly and total rainfall
+#----------------------------------------------------------------------
+
+def PlotRain(PlotIndex):
+
+  # logical grid has 1 column
+
+  plt.subplot((Graphics * 100) + 11 + PlotIndex)
+
+  # plot temperature in red and dew point in green.  Don't specify any
+  # labels here, we will do that in the legend definitions below.
+
+  plt.plot(Time, Rain     , 'g-', linewidth=1.0)
+  plt.plot(Time, RainTotal, 'b-', linewidth=1.0)
+
+  # the xticks literals need to align with the time list (same
+  # number of elements).  Used empty strings to skip labels.
+
+  if Labels:
+    plt.xticks(Time,Labels)
+
+  if LabelText:
+    plt.xlabel(LabelText)
+
+  # Define the range of time and temperature axis.
+
+  plt.axis([TimeMin, TimeMax, 0, RainMax])
+
+  # make some graphics color blocks for use in the legend.
+
+  patch1 = patches.Patch(color='green', label=u'Rain Rate (in)')
+  patch2 = patches.Patch(color='blue' , label=u'Rain Total (in)')
+
+  # display the legend on one line in lower right with no frame using
+  # the red and green color blocks we created above as markers instead
+  # of the default lines.
+
+  plt.legend(loc='lower right', frameon=False, ncol=2, handles=[patch1,patch2])
+
+  # turn off the top and right borders of the figure.
+
+  plt.gca().spines.values()[1].set_visible(False) # right
+  plt.gca().spines.values()[3].set_visible(False) # top
+
+  # turn off ticks on the bottom axis.
+
+  plt.tick_params(bottom=False)
 
 #----------------------------------------------------------------------
 # main - pull time span from command line parameters, then pull supporting
@@ -261,7 +369,8 @@ if Temperature:
  #plt.ioff()
   plt.figure(figsize=(WidthEach, HeightEach * Graphics))
   PlotTemperature(0)
-  PlotTemperature(2)
+  PlotWind(1)
+  PlotRain(2)
   plt.savefig('weather-plot.png', bbox_inches='tight', transparent=True)
   plt.show()
   plt.close()

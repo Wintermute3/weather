@@ -3,7 +3,7 @@
 from __future__ import print_function
 
 PROGRAM = 'condense.py'
-VERSION = '1.809.150'
+VERSION = '1.809.180'
 CONTACT = 'bright.tiger@mail.com' # michael nagy
 
 #==============================================================================
@@ -133,7 +133,7 @@ def CondenseQuarter(DbCursor, Quarter, OldEpochs=-1):
       WindMph       = max(WindMph      , Row['wind_mph'      ])
       WindDirection =                    Row['wind_direction']
       RainIn        = max(RainIn       , Row['rain_in'       ])
-      RainInDay     = max(RainDayIn    , Row['rain_day_in'   ])
+      RainDayIn     = max(RainDayIn    , Row['rain_day_in'   ])
       TauStatus     = max(TauStatus    , Row['tau_status'    ])
       TauQueries    = max(TauQueries   , Row['tau_queries'   ])
       TauReplies    = max(TauReplies   , Row['tau_replies'   ])
