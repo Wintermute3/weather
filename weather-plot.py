@@ -74,7 +74,7 @@ def CalibrateTimeTicks(Quarter, Quarters):
   if Quarters < 960: # 0-10 days
     TickLimit = 5
     TimePattern = '%a %b %d$\n%I:%M %P' # Mon Sep 30th^10:30 am
-    LabelPattern = '\n%Y' # 2018
+    LabelPattern = '' # '\n%Y' # 2018
   else: # 10+ days
     TickLimit = 6
     TimePattern = '%b %d$\n%Y' # Sep 30th^2018
@@ -137,17 +137,25 @@ import psycopg2, psycopg2.extras
 DbName = 'weather'
 
 #----------------------------------------------------------------------
-# given a unix epoch value in seconds, return a quarter value, which
-# is just the epoch value divided by 900 (the number of seconds in 15
-# minutes), and vice versa
+# load the specified quarter and period in quarters from the database.
+# if quarter is zero on entry, autoselect the most recent day.
 #----------------------------------------------------------------------
 
 def LoadData(Quarter, Quarters):
   global Labels, Time, Temperature, DewPoint, WindSpeed
-  global Rain, RainTotal, QuarterCount
+  global Rain, RainTotal
   global TempMin, TempMax, RainMax, WindMax, TimeMin, TimeMax
-  global QuarterMin, StartQuarter, QuarterMax
-  CalibrateTimeTicks(StartQuarter, Quarters)
+  DbConnection = psycopg2.connect('dbname=weather')
+  DbCursor = DbConnection.cursor(cursor_factory=psycopg2.extras.DictCursor)
+  if Quarter < 1:
+    Offset = ((Quarter - 1) * 96) + 16
+    print('offset = %d' % (Offset))
+    DbCursor.execute('SELECT max(id) FROM quarter')
+    Row = DbCursor.fetchone()
+    print('MAX=%d' % (Row[0]))
+    Quarter  = ((Row[0] / 96) * 96) + Offset
+    Quarters =                  96
+  print('%d..%d' % (Quarter, Quarters))
   Labels      = []
   Time        = []
   Temperature = []
@@ -155,21 +163,33 @@ def LoadData(Quarter, Quarters):
   WindSpeed   = []
   Rain        = []
   RainTotal   = []
-  QuarterMin = QuarterMax = 0
-  DbConnection = psycopg2.connect('dbname=weather')
-  DbCursor = DbConnection.cursor(cursor_factory=psycopg2.extras.DictCursor)
+  CalibrateTimeTicks(Quarter, Quarters)
+  DbCursor.execute('SELECT min(id),max(id) FROM quarter WHERE id BETWEEN %d AND %d' % (
+    Quarter, Quarter + Quarters - 1))
+  Row = DbCursor.fetchone()
+  QuarterMin = Row[0]
+  QuarterMax = Row[1]
+  print('%d..%d' % (QuarterMin, QuarterMax))
+  for HotQuarter in range(Quarter,QuarterMin):
+    Time.append(HotQuarter)
+    Labels.append(LocalTimeStr(HotQuarter, Quarters))
+    Temperature.append(0)
+    DewPoint   .append(0)
+    Humidity   .append(0)
+    WindSpeed  .append(0)
+    Direction  .append(0)
+    Rain       .append(0)
+    RainTotal  .append(0)
+    Tau        .append(0)
   DbCursor.execute('SELECT * FROM quarter WHERE id BETWEEN %d AND %d ORDER BY id ASC' % (
     Quarter, Quarter + Quarters - 1))
-  QueryCount = 0
+  QueryCount = FirstIndex = 0
   for Row in DbCursor.fetchall():
     QueryCount += 1
-    Quarter = Row['id']
-    if QuarterMin:
-      QuarterMax = Quarter
-    else:
-      QuarterMin = QuarterMax = Quarter
-    Time.append(Quarter)
-    Labels.append(LocalTimeStr(Quarter, Quarters))
+    HotQuarter = Row['id']
+    FirstIndex = len(Temperature)
+    Time.append(HotQuarter)
+    Labels.append(LocalTimeStr(HotQuarter, Quarters))
     Temperature.append(Row['temp_f'        ])
     DewPoint   .append(Row['dewpoint_f'    ])
     Humidity   .append(Row['humidity_pct'  ])
@@ -178,25 +198,34 @@ def LoadData(Quarter, Quarters):
     Rain       .append(Row['rain_in'       ])
     RainTotal  .append(Row['rain_day_in'   ])
     Tau        .append(Row['tau_status'    ])
+  for HotQuarter in range(QuarterMax + 1,Quarter + Quarters):
+    Time.append(HotQuarter)
+    Labels.append(LocalTimeStr(HotQuarter, Quarters))
+    Temperature.append(0)
+    DewPoint   .append(0)
+    Humidity   .append(0)
+    WindSpeed  .append(0)
+    Direction  .append(0)
+    Rain       .append(0)
+    RainTotal  .append(0)
+    Tau        .append(0)
   if Temperature:
-    TempMax = Temperature[0]
-    TempMin = DewPoint   [0]
-    WindMax = WindSpeed  [0]
-    RainMax = RainTotal  [0]
-    TimeMin = TimeMax = Time[0]
+    TempMax = Temperature[FirstIndex]
+    TempMin = DewPoint   [FirstIndex]
+    WindMax = WindSpeed  [FirstIndex]
+    RainMax = RainTotal  [FirstIndex]
+    TimeMin = Quarter
+    TimeMax = Quarter + Quarters - 1
     for i in range(1,len(Temperature)):
-      TempMax = max(TempMax, Temperature[i])
-      TempMin = min(TempMin, DewPoint   [i])
-      WindMax = max(WindMax, WindSpeed  [i])
-      RainMax = max(RainMax, RainTotal  [i])
-      TimeMax = max(TimeMin, Time       [i])
-      TimeMin = min(TimeMin, Time       [i])
+      if Temperature[i]:
+        TempMax = max(TempMax, Temperature[i])
+        TempMin = min(TempMin, DewPoint   [i])
+        WindMax = max(WindMax, WindSpeed  [i])
+        RainMax = max(RainMax, RainTotal  [i])
     TempMax = ((round(TempMax      ) / 5.0) + 1.0) * 5.0
     TempMin = ((round(TempMin      ) / 5.0) - 2.0) * 5.0
     WindMax = ((round(WindMax      ) / 5.0) + 1.0) * 5.0
     RainMax = ( round(RainMax * 2.0)        + 1.0) * 0.5
-    StartQuarter = QuarterMin
-    QuarterCount = QuarterMax - QuarterMin + 1
   else:
     print('no data in range')
   DbConnection.commit()
@@ -352,21 +381,21 @@ def PlotRain(PlotIndex):
 # datasets from postgresql, then graph the various values.
 #----------------------------------------------------------------------
 
-try:
-  StartQuarter = int(sys.argv[1])
-  QuarterCount = int(sys.argv[2])
-  if len(sys.argv) > 3 or StartQuarter < 1000 or QuarterCount < 1:
-    raise Exception('oops')
-except:
-  print('bad arguments - specify start quarter and quarter count')
-  os._exit(1)
+Quarter = Quarters = 0
+if len(sys.argv) > 1:
+  try:
+    Quarter = int(sys.argv[1])
+    if Quarter > 0:
+      Quarters = int(sys.argv[2])
+  except:
+    print('bad arguments - specify start quarter and quarter count')
+    os._exit(1)
 
 # load data over specified range, reducing range to cover actual data
 
-LoadData(StartQuarter, QuarterCount)
+LoadData(Quarter, Quarters)
 
 if Temperature:
-
  #plt.ioff()
   plt.figure(figsize=(WidthEach, HeightEach * Graphics))
   PlotTemperature(0)
