@@ -366,6 +366,7 @@ except:
 LoadData(StartQuarter, QuarterCount)
 
 if Temperature:
+
  #plt.ioff()
   plt.figure(figsize=(WidthEach, HeightEach * Graphics))
   PlotTemperature(0)
