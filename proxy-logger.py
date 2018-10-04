@@ -3,7 +3,7 @@
 from __future__ import print_function
 
 PROGRAM = 'proxy-logger.py'
-VERSION = '1.809.180'
+VERSION = '1.810.031'
 CONTACT = 'bright.tiger@mail.com' # michael nagy
 
 #==============================================================================
@@ -33,6 +33,12 @@ import os, requests, json, time, calendar, logging, subprocess
 from syslog import syslog
 from time import sleep
 from datetime import datetime
+
+#----------------------------------------------------------------------
+# Externalize passwords for weather apis.
+#----------------------------------------------------------------------
+
+Password = json.load(open('/home/pi/weather/.passwords.json'))
 
 #----------------------------------------------------------------------
 # two-digit cyclic counter to provide a warm fuzzy progress indicator
@@ -245,7 +251,6 @@ TAU_ADDRESS = '192.168.18.101'
 #----------------------------------------------------------------------
 
 WU_STATION_ID = 'KFLMYAKK20'
-WU_PASSWORD   = 'h1i2nqhw'
 WU_URL_GET    = 'http://weatherstation.wunderground.com/weatherstation/updateweatherstation.php'
 
 #----------------------------------------------------------------------
@@ -253,7 +258,6 @@ WU_URL_GET    = 'http://weatherstation.wunderground.com/weatherstation/updatewea
 #----------------------------------------------------------------------
 
 PS_STATION_ID = 'KFLMYAKK20'
-PS_PASSWORD   = 'micro123'
 PS_URL_GET    = 'https://www.pwsweather.com/pwsupdate/pwsupdate.php'
 
 #----------------------------------------------------------------------
@@ -400,7 +404,7 @@ try:
         try:
           Data = {
             'ID'          :                WU_STATION_ID    ,
-            'PASSWORD'    :                WU_PASSWORD      ,
+            'PASSWORD'    :      Password['WU_PASSWORD'   ] ,
             'dateutc'     : '%s'    % (wb['actual.utc'    ]),
             'winddir'     : '%1.0f' % (wb['wind.direction']),
             'windspeedmph': '%d'    % (wb['wind.mph'      ]),
@@ -433,7 +437,7 @@ try:
         try:
           Data = {
             'ID'          :                PS_STATION_ID    ,
-            'PASSWORD'    :                PS_PASSWORD      ,
+            'PASSWORD'    :      Password['PS_PASSWORD'   ] ,
             'dateutc'     : '%s'    % (wb['actual.utc'    ]),
             'winddir'     : '%1.0f' % (wb['wind.direction']),
             'windspeedmph': '%d'    % (wb['wind.mph'      ]),

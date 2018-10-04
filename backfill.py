@@ -3,7 +3,7 @@
 from __future__ import print_function
 
 PROGRAM = 'backfill.py'
-VERSION = '1.809.301'
+VERSION = '1.810.031'
 CONTACT = 'bright.tiger@mail.com' # michael nagy
 
 #==============================================================================
@@ -13,9 +13,15 @@ CONTACT = 'bright.tiger@mail.com' # michael nagy
 # quarters, and note if log data is unavailable.
 #==============================================================================
 
-import os, sys, requests, time, calendar
+import os, sys, requests, time, calendar, json
 
 DebugFlag = False
+
+#----------------------------------------------------------------------
+# Externalize passwords for weather apis.
+#----------------------------------------------------------------------
+
+Password = json.load(open('/home/pi/weather/.passwords.json'))
 
 #----------------------------------------------------------------------
 # the standard utc and local time string format we use throughout
@@ -74,7 +80,6 @@ WB_URL_JSON = 'http://192.168.18.107'
 #----------------------------------------------------------------------
 
 WU_STATION_ID = 'KFLMYAKK20'
-WU_PASSWORD   = 'h1i2nqhw'
 WU_URL_GET    = 'http://weatherstation.wunderground.com/weatherstation/updateweatherstation.php'
 
 #----------------------------------------------------------------------
@@ -82,7 +87,6 @@ WU_URL_GET    = 'http://weatherstation.wunderground.com/weatherstation/updatewea
 #----------------------------------------------------------------------
 
 PS_STATION_ID = 'KFLMYAKK20'
-PS_PASSWORD   = 'micro123'
 PS_URL_GET    = 'https://www.pwsweather.com/pwsupdate/pwsupdate.php'
 
 #----------------------------------------------------------------------
@@ -158,10 +162,10 @@ def ReportNewData():
     Quarter      = Row['id'           ]
     ReportedMask = Row['reported_mask']
     if ReportedMask & MASK_REPORTED_WU == 0:
-      if Report(DbCursor, Quarter, 'wu', WU_URL_GET, WU_STATION_ID, WU_PASSWORD):
+      if Report(DbCursor, Quarter, 'wu', WU_URL_GET, WU_STATION_ID, Password['WU_PASSWORD']):
         ReportedMask |= MASK_REPORTED_WU
     if ReportedMask & MASK_REPORTED_PS == 0:
-      if Report(DbCursor, Quarter, 'ps', PS_URL_GET, PS_STATION_ID, PS_PASSWORD):
+      if Report(DbCursor, Quarter, 'ps', PS_URL_GET, PS_STATION_ID, Password['PS_PASSWORD']):
         ReportedMask |= MASK_REPORTED_PS
     if ReportedMask != Row['reported_mask']:
       try:
