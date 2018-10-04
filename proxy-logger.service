@@ -1,0 +1,26 @@
+[Unit]
+Description=proxy-logger.py - weatherbox3 proxy and logging service
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/weather
+ExecStart=/home/pi/weather/proxy-logger.py
+StandardOutput=syslog
+StandardError=syslog
+User=pi
+Group=pi
+Restart=always
+
+# enable watchdog, must reset every 5 minutes, two resets within a
+# fifteen-minute interval and reboot.  we also restart if the process
+# exits for any reason, including a normal rc=0 exit
+
+WatchdogSec=300s
+StartLimitInterval=15min
+StartLimitBurst=2
+StartLimitAction=reboot-force
+NotifyAccess=all
+
+[Install]
+WantedBy=multi-user.target
