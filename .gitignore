@@ -1,1 +1,8 @@
 .passwords.json
+*.pdf
+data/
+luma.examples/
+*.log
+*.png
+*.tgz
+web/
