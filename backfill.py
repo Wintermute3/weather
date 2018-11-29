@@ -3,7 +3,7 @@
 from __future__ import print_function
 
 PROGRAM = 'backfill.py'
-VERSION = '1.810.031'
+VERSION = '1.811.281'
 CONTACT = 'bright.tiger@mail.com' # michael nagy
 
 #==============================================================================
@@ -246,6 +246,7 @@ def Wb3LogPull(Quarter):
           'wind_direction': wb['wind.direction'],
           'rain_in'       : wb['rain.in'       ],
           'rain_day_in'   : wb['rain.day.in'   ],
+          'power_volt'    : wb['power.volt'    ],
           'tau_status'    : wb['tau.status'    ],
           'tau_queries'   : wb['tau.queries'   ],
           'tau_replies'   : wb['tau.replies'   ],
@@ -288,6 +289,7 @@ def QueryWb3Log():
           sql += 'wind_direction = %1.0f,' % (Data['wind_direction'])
           sql += 'rain_in = %4.2f,'        % (Data['rain_in'       ])
           sql += 'rain_day_in = %4.2f,'    % (Data['rain_day_in'   ])
+          sql += 'power_volt = %6.3f,'     % (Data['power_volt'    ])
           sql += 'tau_status = %d,'        % (Data['tau_status'    ])
           sql += 'tau_queries = %d,'       % (Data['tau_queries'   ])
           sql += 'tau_replies = %d,'       % (Data['tau_replies'   ])

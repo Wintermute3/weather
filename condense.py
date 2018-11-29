@@ -3,7 +3,7 @@
 from __future__ import print_function
 
 PROGRAM = 'condense.py'
-VERSION = '1.809.180'
+VERSION = '1.811.281'
 CONTACT = 'bright.tiger@mail.com' # michael nagy
 
 #==============================================================================
@@ -70,6 +70,7 @@ def DbInit():
   sql += 'wind_direction REAL,' # consolidated, final
   sql += 'rain_in        REAL,' # consolidated, maximum
   sql += 'rain_day_in    REAL,' # consolidated, maximum
+  sql += 'power_volt     REAL,' # consolidated, maximum
   sql += 'tau_status     INT ,' # consolidated, maximum
   sql += 'tau_queries    INT ,' # consolidated, maximum
   sql += 'tau_replies    INT ,' # consolidated, maximum
@@ -115,6 +116,7 @@ def CondenseQuarter(DbCursor, Quarter, OldEpochs=-1):
     WindDirection = 0.0
     RainIn        = 0.0
     RainDayIn     = 0.0
+    PowerVolt     = 0.0
     TauStatus     = 0
     TauQueries    = 0
     TauReplies    = 0
@@ -134,6 +136,7 @@ def CondenseQuarter(DbCursor, Quarter, OldEpochs=-1):
       WindDirection =                    Row['wind_direction']
       RainIn        = max(RainIn       , Row['rain_in'       ])
       RainDayIn     = max(RainDayIn    , Row['rain_day_in'   ])
+      PowerVolt     = max(PowerVolt    , Row['power_volt'    ])
       TauStatus     = max(TauStatus    , Row['tau_status'    ])
       TauQueries    = max(TauQueries   , Row['tau_queries'   ])
       TauReplies    = max(TauReplies   , Row['tau_replies'   ])
@@ -163,6 +166,7 @@ def CondenseQuarter(DbCursor, Quarter, OldEpochs=-1):
     sql += 'wind_direction,'
     sql += 'rain_in,'
     sql += 'rain_day_in,'
+    sql += 'power_volt,'
     sql += 'tau_status,'
     sql += 'tau_queries,'
     sql += 'tau_replies,'
@@ -182,6 +186,7 @@ def CondenseQuarter(DbCursor, Quarter, OldEpochs=-1):
     sql += '%1.0f,' % (WindDirection)
     sql += '%4.2f,' % (RainIn       )
     sql += '%4.2f,' % (RainDayIn    )
+    sql += '%6.3f,' % (PowerVolt    )
     sql += '%d,'    % (TauStatus    )
     sql += '%d,'    % (TauQueries   )
     sql += '%d,'    % (TauReplies   )

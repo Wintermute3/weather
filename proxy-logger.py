@@ -3,7 +3,7 @@
 from __future__ import print_function
 
 PROGRAM = 'proxy-logger.py'
-VERSION = '1.810.031'
+VERSION = '1.811.281'
 CONTACT = 'bright.tiger@mail.com' # michael nagy
 
 #==============================================================================
@@ -218,6 +218,7 @@ def DbInit():
   sql += 'wind_direction REAL,'
   sql += 'rain_in        REAL,'
   sql += 'rain_day_in    REAL,'
+  sql += 'power_volt     REAL,'
   sql += 'tau_status     INT ,'
   sql += 'tau_queries    INT ,'
   sql += 'tau_replies    INT ,'
@@ -478,6 +479,7 @@ try:
         sql += 'wind_direction,'
         sql += 'rain_in,'
         sql += 'rain_day_in,'
+        sql += 'power_volt,'
         sql += 'tau_status,'
         sql += 'tau_queries,'
         sql += 'tau_replies,'
@@ -495,6 +497,7 @@ try:
         sql += '%1.0f,' % wb['wind.direction' ]
         sql += '%4.2f,' % wb['rain.in'        ]
         sql += '%4.2f,' % wb['rain.day.in'    ]
+        sql += '%6.3f,' % wb['power.volt'     ]
         sql += '%d,'    % wb['tau.status'     ]
         sql += '%d,'    % wb['tau.queries'    ]
         sql += '%d,'    % wb['tau.replies'    ]
