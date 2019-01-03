@@ -3,7 +3,7 @@
 // ============================================================================
 
 #define PROJECT  "weatherbox3"
-#define VERSION    "1.809.301"
+#define VERSION    "1.812.171"
 #define EMAIL1   "bright.tiger"
 #define EMAIL2     "@gmail.com"
 
@@ -102,6 +102,9 @@
 //
 // All i2c devices are either integrated directly on the weatherboard or
 // plugged into it via grove connectors.
+//
+// The arduino hardware watchdog timer is engaged.  It will reset the arduino
+// firmware if not cleared at least once every 8 seconds.
 // ============================================================================
 
 typedef unsigned long  int    bit32;
@@ -116,7 +119,7 @@ typedef                char * cptr ;
 char Buffer[BUFFER_MAX];
 bit8 BufferLen = 0;
 
-bit16 BootCount     = 0;
+bit16 BootCount  = 0;
 bit16 UptimeMins = 0;
 
 // ============================================================================
@@ -134,6 +137,20 @@ IPAddress EnetServerIPv4(192, 168, 18, 107); // our static local network address
 
 EthernetServer EnetServer(ENET_PORT);
 EthernetClient EnetClient           ;
+
+// ============================================================================
+// Watchdog parameters.
+// ============================================================================
+
+#include "avr/wdt.h"
+
+void WatchdogInit() {
+  wdt_enable(WDTO_8S);
+}
+
+void WatchdogReset() {
+  wdt_reset();
+}
 
 // ============================================================================
 // Tornado Alert Unit parameters.
@@ -292,13 +309,28 @@ void ReadPres() {
 // anemometer and the rain gauge.
 // ============================================================================
 
+#define WPI_VOLT  A1 // red    - analog voltage
 #define WPI_VANE  A2 // orange - analog voltage
+
 #define WPI_ANEM   2 // green  - digital pulses low on each click (dirty)
 #define WPI_RAIN   3 // yellow - digital pulses low on each click (dirty)
 
 void InitPins() { // and Rain
   pinMode(WPI_ANEM, INPUT); digitalWrite(WPI_ANEM, HIGH); attachInterrupt(digitalPinToInterrupt(WPI_ANEM), AnemInterrupt, RISING);
   pinMode(WPI_RAIN, INPUT); digitalWrite(WPI_RAIN, HIGH); attachInterrupt(digitalPinToInterrupt(WPI_RAIN), RainInterrupt, RISING);
+}
+
+// ============================================================================
+// Track power supply voltage via a 15k/4.7k resistive divider referenced to
+// the 5v power to the mcu.  1024 == (5.00v * 19.7) / 4.7 == 20.957.
+// ============================================================================
+
+#define VUNIT 0.081865
+
+bit8 LastVolt = 0; // unit 0.081865v, 12v == 147
+
+void ReadVolt() {
+  LastVolt = analogRead(WPI_VOLT) >> 2;
 }
 
 // ============================================================================
@@ -502,7 +534,7 @@ void ClearTotals() {
 // updated each time sensors and the realtime clock are read.
 // ============================================================================
 
-#define FRAM_MAGIC 0x395c
+#define FRAM_MAGIC 0xb95c
 
 typedef struct {
   bit16 Magic      ; // must be first two bytes on chip
@@ -522,6 +554,7 @@ typedef struct {
   bit8  Second    ; // 00..59
   bit8  Humi      ; // percent
   bit8  Vane      ; // unit = 22.5 degrees
+  bit8  Volt      ; // unit = 0.081865 volt
   bit8  Anem      ; // unit = mph
   bit8  AnemAvg   ; // unit = mph, last 60 minutes
   bit8  AnemMax   ; // unit = mph, since midnight
@@ -715,13 +748,14 @@ void LogData() {
 void ReadSensors() {
   Serial.print(F("read sensors..."));
   ReadVane(); // update LastVane
+  ReadVolt(); // update LastVolt
   ReadAnem(); // update LastAnem, LastAnemAvg and LastAnemMax
   ReadRain(); // update LastRain and LastRainDay
   ReadHumi(); // update LastHumi and LastTemp
   ReadPres(); // update LastPres
   ReadTime(); // update RtcXX
   float Temp = LastTemp / 10.0;
-  float Dewp = 243.04 * (         log(LastHumi / 100.0) + ((17.625 * Temp) / (243.04 + Temp))) /
+  float Dewp = 243.04 * (log(LastHumi / 100.0) + ((17.625 * Temp) / (243.04 + Temp))) /
                (17.625 - log(LastHumi / 100.0) - ((17.625 * Temp) / (243.04 + Temp)));
   LastDewpoint = round(Dewp * 10.0);
   Serial.print(F("update header..."));
@@ -737,6 +771,7 @@ void ReadSensors() {
   FramWriteByte(LOG_HEADER_SIZE + offsetof(LogRecord, Second    ), LastSecond  );
   FramWriteByte(LOG_HEADER_SIZE + offsetof(LogRecord, Humi      ), LastHumi    );
   FramWriteByte(LOG_HEADER_SIZE + offsetof(LogRecord, Vane      ), LastVane    );
+  FramWriteByte(LOG_HEADER_SIZE + offsetof(LogRecord, Volt      ), LastVolt    );
   FramWriteByte(LOG_HEADER_SIZE + offsetof(LogRecord, Anem      ), LastAnem    );
   FramWriteByte(LOG_HEADER_SIZE + offsetof(LogRecord, AnemAvg   ), LastAnemAvg );
   FramWriteByte(LOG_HEADER_SIZE + offsetof(LogRecord, AnemMax   ), LastAnemMax );
@@ -815,7 +850,17 @@ void JsonBit16(EthernetClient &client, const __FlashStringHelper * Key, bit16 Va
   client.print(Value);
 }
 
-void JsonScale(EthernetClient &client, const __FlashStringHelper * Key, bit16 Value, float Unit, bit8 Decimals) {
+void JsonScaleBit(EthernetClient &client, const __FlashStringHelper * Key, bit16 Value, float Unit, bit8 Decimals) {
+  char Temp[10];
+  client.print(JsonFrame(','));
+  client.print(F("\""));
+  client.print(Key);
+  client.print(F("\": "));
+  dtostrf(Value * Unit, 3, Decimals, Temp);
+  client.print(Temp);
+}
+
+void JsonScaleInt(EthernetClient &client, const __FlashStringHelper * Key, int16 Value, float Unit, bit8 Decimals) {
   char Temp[10];
   client.print(JsonFrame(','));
   client.print(F("\""));
@@ -1021,33 +1066,34 @@ void EnetHandleServer() {
               } else {
                 LogOffset += LOG_RECORD_SIZE * LogIndex;
               }
-              JsonBit16(client, F("log.index"     ), LogIndex );
-              JsonBit16(client, F("log.offset"    ), LogOffset);
-              JsonBit16(client, F("log.full"      ), FramReadByte(offsetof(LogHeader, LogFull)));
-              JsonBit16(client, F("log.next"      ), FramReadWord(offsetof(LogHeader, LogNext)));
-              JsonBit16(client, F("boot.count"    ), FramReadWord(LogOffset + offsetof(LogRecord, BootCount ))          );
-              JsonBit16(client, F("uptime.minutes"), FramReadWord(LogOffset + offsetof(LogRecord, UptimeMins))          );
-              JsonBit16(client, F("time.year"     ), FramReadByte(LogOffset + offsetof(LogRecord, Year      )) + 2000   );
-              JsonBit16(client, F("time.month"    ), FramReadByte(LogOffset + offsetof(LogRecord, Month     ))          );
-              JsonBit16(client, F("time.day"      ), FramReadByte(LogOffset + offsetof(LogRecord, Day       ))          );
-              JsonBit16(client, F("time.hour"     ), FramReadByte(LogOffset + offsetof(LogRecord, Hour      ))          );
-              JsonBit16(client, F("time.minute"   ), FramReadByte(LogOffset + offsetof(LogRecord, Minute    ))          );
-              JsonBit16(client, F("time.second"   ), FramReadByte(LogOffset + offsetof(LogRecord, Second    ))          );
-              JsonBit16(client, F("humidity.pct"  ), FramReadByte(LogOffset + offsetof(LogRecord, Humi      ))          );
-              JsonScale(client, F("wind.direction"), FramReadByte(LogOffset + offsetof(LogRecord, Vane      )), 22.5 , 1);
-              JsonBit16(client, F("wind.mph"      ), FramReadByte(LogOffset + offsetof(LogRecord, Anem      ))          );
-              JsonBit16(client, F("wind.avg.mph"  ), FramReadByte(LogOffset + offsetof(LogRecord, AnemAvg   ))          );
-              JsonBit16(client, F("wind.max.mph"  ), FramReadByte(LogOffset + offsetof(LogRecord, AnemMax   ))          );
-              JsonScale(client, F("temp.c"        ), FramReadWord(LogOffset + offsetof(LogRecord, Temp      )), 0.1  , 1);
-              JsonScale(client, F("dewpoint.c"    ), FramReadWord(LogOffset + offsetof(LogRecord, Dewpoint  )), 0.1  , 1);
-              JsonScale(client, F("rain.in"       ), FramReadWord(LogOffset + offsetof(LogRecord, Rain      )), 0.011, 2);
-              JsonScale(client, F("rain.day.in"   ), FramReadWord(LogOffset + offsetof(LogRecord, RainDay   )), 0.011, 2);
-              JsonScale(client, F("pressure.inhg" ), FramReadWord(LogOffset + offsetof(LogRecord, Pres      )), 0.001, 3);
-              JsonBit16(client, F("tau.set"       ), FramReadByte(LogOffset + offsetof(LogRecord, TauSet    ))          );
-              JsonBit16(client, F("tau.status"    ), FramReadByte(LogOffset + offsetof(LogRecord, TauMax    ))          );
-              JsonText (client, F("tau.address"   ), TauAddress);
-              JsonBit16(client, F("tau.queries"   ), TauQueries);
-              JsonBit16(client, F("tau.replies"   ), TauReplies);
+              JsonBit16   (client, F("log.index"     ), LogIndex );
+              JsonBit16   (client, F("log.offset"    ), LogOffset);
+              JsonBit16   (client, F("log.full"      ), FramReadByte(offsetof(LogHeader, LogFull)));
+              JsonBit16   (client, F("log.next"      ), FramReadWord(offsetof(LogHeader, LogNext)));
+              JsonBit16   (client, F("boot.count"    ), FramReadWord(LogOffset + offsetof(LogRecord, BootCount ))          );
+              JsonBit16   (client, F("uptime.minutes"), FramReadWord(LogOffset + offsetof(LogRecord, UptimeMins))          );
+              JsonBit16   (client, F("time.year"     ), FramReadByte(LogOffset + offsetof(LogRecord, Year      )) + 2000   );
+              JsonBit16   (client, F("time.month"    ), FramReadByte(LogOffset + offsetof(LogRecord, Month     ))          );
+              JsonBit16   (client, F("time.day"      ), FramReadByte(LogOffset + offsetof(LogRecord, Day       ))          );
+              JsonBit16   (client, F("time.hour"     ), FramReadByte(LogOffset + offsetof(LogRecord, Hour      ))          );
+              JsonBit16   (client, F("time.minute"   ), FramReadByte(LogOffset + offsetof(LogRecord, Minute    ))          );
+              JsonBit16   (client, F("time.second"   ), FramReadByte(LogOffset + offsetof(LogRecord, Second    ))          );
+              JsonBit16   (client, F("humidity.pct"  ), FramReadByte(LogOffset + offsetof(LogRecord, Humi      ))          );
+              JsonScaleBit(client, F("wind.direction"), FramReadByte(LogOffset + offsetof(LogRecord, Vane      )), 22.5 , 1);
+              JsonScaleBit(client, F("power.volt"    ), FramReadByte(LogOffset + offsetof(LogRecord, Volt      )), VUNIT, 3);
+              JsonBit16   (client, F("wind.mph"      ), FramReadByte(LogOffset + offsetof(LogRecord, Anem      ))          );
+              JsonBit16   (client, F("wind.avg.mph"  ), FramReadByte(LogOffset + offsetof(LogRecord, AnemAvg   ))          );
+              JsonBit16   (client, F("wind.max.mph"  ), FramReadByte(LogOffset + offsetof(LogRecord, AnemMax   ))          );
+              JsonScaleInt(client, F("temp.c"        ), FramReadWord(LogOffset + offsetof(LogRecord, Temp      )), 0.1  , 1);
+              JsonScaleInt(client, F("dewpoint.c"    ), FramReadWord(LogOffset + offsetof(LogRecord, Dewpoint  )), 0.1  , 1);
+              JsonScaleBit(client, F("rain.in"       ), FramReadWord(LogOffset + offsetof(LogRecord, Rain      )), 0.011, 2);
+              JsonScaleBit(client, F("rain.day.in"   ), FramReadWord(LogOffset + offsetof(LogRecord, RainDay   )), 0.011, 2);
+              JsonScaleBit(client, F("pressure.inhg" ), FramReadWord(LogOffset + offsetof(LogRecord, Pres      )), 0.001, 3);
+              JsonBit16   (client, F("tau.set"       ), FramReadByte(LogOffset + offsetof(LogRecord, TauSet    ))          );
+              JsonBit16   (client, F("tau.status"    ), FramReadByte(LogOffset + offsetof(LogRecord, TauMax    ))          );
+              JsonText    (client, F("tau.address"   ), TauAddress);
+              JsonBit16   (client, F("tau.queries"   ), TauQueries);
+              JsonBit16   (client, F("tau.replies"   ), TauReplies);
             }
             client.print(JsonFrame('}'));
             Serial.println(F("  sending response"));
@@ -1169,6 +1215,9 @@ void setup() {
   sprintf_P(Buffer, PSTR("  tau address = %s"), TauAddress);
   Serial.println(Buffer);
   Serial.println(F("done"));
+  Serial.print(F("watchdog..."));
+  WatchdogInit();
+  Serial.println(F("ready"));
 }
 
 // ============================================================================
@@ -1188,6 +1237,7 @@ bit8  LcdScreen     = 0; // which of the lcd screens is displayed
 
 void loop() {
   if (millis() - LastReadTime > 5000UL) {
+    WatchdogReset();
     ReadSensors();
     DataReady = 1;
     LastReadTime = millis();
@@ -1206,6 +1256,7 @@ void loop() {
       LastClearDay = LastDay;
   } }
   if (millis() - LastLcdTime > 1000UL) {
+    WatchdogReset();
     LastLcdTime = millis();
     switch (LcdScreen) {
       case 0: ShowLcdLegend (); break;
@@ -1214,12 +1265,15 @@ void loop() {
       case 3: ShowLcdNetwork(); break;
   } }
   if (millis() - LastLcdAuto > 3000UL) {
+    WatchdogReset();
     LastLcdAuto = millis();
     LcdScreen += 1;
     LcdScreen %= 4;
   }
   if (DataReady) {
+    WatchdogReset();
     EnetHandleServer();
+    WatchdogReset();
 } }
 
 // ============================================================================
