@@ -77,12 +77,11 @@ try:
   for Epochs in sorted(Data):
     Stats = Data[Epochs]
     print('%6d  %8d  %12d  %5d' % (Epochs, Stats['count'], Stats['wu'], Stats['ps']))
-  print('        --------')  
+  print('        --------')
   print('        %8d, %s gaps' % (Quarters, str(Gaps).replace(' ','')))
   print()
 except psycopg2.Error as er:
   print('db error: %s' % (er.message))
-
 
 #==============================================================================
 # end
