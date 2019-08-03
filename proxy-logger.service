@@ -1,5 +1,5 @@
 [Unit]
-Description=proxy-logger.py - weatherbox3 proxy and logging service
+Description=proxy-logger.py - weatherbox4 proxy and logging service
 After=network-online.target
 
 [Service]

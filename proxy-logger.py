@@ -3,13 +3,13 @@
 from __future__ import print_function
 
 PROGRAM = 'proxy-logger.py'
-VERSION = '1.811.281'
+VERSION = '1.908.021'
 CONTACT = 'bright.tiger@mail.com' # michael nagy
 
 #==============================================================================
-# proxy-logger - periodically query data from a weatherbox3 system (which in
-# turn may be querying a tornado alert unit), and report it to both weather
-# underground and aeris.  if the realtime clock in the weatherbox3 is off by
+# proxy-logger - periodically query data from a weatherbox4 system (which in
+# turn will be querying a tornado alert unit), and report it to both weather
+# underground and aeris.  if the realtime clock in the weatherbox4 is off by
 # more than 60 seconds, reset it to the current time.  also log the weather
 # data to a postgresql database.
 #
@@ -33,6 +33,15 @@ import os, requests, json, time, calendar, logging, subprocess
 from syslog import syslog
 from time import sleep
 from datetime import datetime
+
+try:
+  import serial
+except:
+  print("*** unable to import 'serial' - install with:")
+  print()
+  print('  sudo apt-get install python-serial')
+  print()
+  os._exit(1)
 
 #----------------------------------------------------------------------
 # Externalize passwords for weather apis.
@@ -95,7 +104,7 @@ def GpioCleanup():
 
 #----------------------------------------------------------------------
 # if the oled display is available configure it and enable the gpio
-# gpio buttons
+# buttons
 #----------------------------------------------------------------------
 
 try:
@@ -111,14 +120,15 @@ try:
     make_font("ProggyTiny.ttf", 16)
   )
   GpioInit()
+  print('[00] oled enabled')
 except:
-  pass
+  print('[00] oled disabled')
 
 #----------------------------------------------------------------------
 # the watchdog must be reset at least once every 5 minutes or systemd
 # will, as configured in our unit file, restart us, and actually
 # reboot the system if it has to restart us too often.  we reset the
-# watchdog on every successful query of the weatherbox3 system, which
+# watchdog on every successful query of the weatherbox4 system, which
 # is about the most reliable indicator of health we have available.
 # note that for getpid() to work, the systemd unit file must specify:
 #
@@ -220,12 +230,39 @@ def DbInit():
   sql += 'rain_day_in    REAL,'
   sql += 'power_volt     REAL,'
   sql += 'tau_status     INT ,'
-  sql += 'tau_queries    INT ,'
-  sql += 'tau_replies    INT ,'
   sql += 'log_next       INT ,'
   sql += 'log_full       INT ,'
   sql += 'reported_mask  INT);'
   DbExecute('init ', sql)
+
+#----------------------------------------------------------------------
+# serial port - half duplex, 19200 bps, return decoded json
+#----------------------------------------------------------------------
+
+Wb4Port = None
+
+def Wb4Json(Command='', Trace=False):
+  Command += '\r'
+  for Character in Command:
+    Wb4Port.write(Character)
+    sleep(0.1)
+  Response = Wb4Port.read(4000)
+  if Trace:
+    print('%s' % (Response))
+  try:
+    return json.loads('{%s}' % Response.split('{')[1].split('}')[0])
+  except:
+    return None
+
+def Wb4Init():
+  global Wb4Port
+  try:
+    Wb4Port = serial.Serial(WB4_PORT, baudrate=WB4_BAUD, timeout=1.0)
+    Wb4Json()
+  except:
+    Print('[00] serial error', 'permalog')
+    sleep(2)
+    os._exit(1)
 
 #----------------------------------------------------------------------
 # report no more than once per minute
@@ -234,18 +271,11 @@ def DbInit():
 LOOP_TIME_SECS = 60
 
 #----------------------------------------------------------------------
-# weatherbox3 urls
+# serial port parameters for weatherbox4 rs485 interface
 #----------------------------------------------------------------------
 
-WB_URL_JSON = 'http://192.168.18.107/now'
-WB_URL_TIME = 'http://192.168.18.107/time'
-WB_URL_TAU  = 'http://192.168.18.107/tau'
-
-#----------------------------------------------------------------------
-# tornado alert unit address
-#----------------------------------------------------------------------
-
-TAU_ADDRESS = '192.168.18.101'
+WB4_PORT = '/dev/ttyUSB0'
+WB4_BAUD = 19200
 
 #----------------------------------------------------------------------
 # weather underground parameters
@@ -269,14 +299,13 @@ PermaLog('%s %s' % (PROGRAM, VERSION))
 Print('[00] pid %d' % (os.getpid()), 'permalog')
 
 DbInit()
+Wb4Init()
 
-FAILSAFE_MAX = 5 # minutes without wb3 msx before auto-exit
+FAILSAFE_MAX = 5 # minutes without wb4 msx before auto-exit
 
-FailSafe     = 0 # runcount of bad wb3 queries
-RebootsTotal = 0 # wb3 reboot count
-RebootsShow  = 0 # wb3 reboots since cleared
-TauDelta     = 0 # delta between tau queries and replies
-TauHealth    = 1 # dead=0..1..2=ok
+FailSafe     = 0 # runcount of bad wb4 queries
+RebootsTotal = 0 # wb4 reboot count
+RebootsShow  = 0 # wb4 reboots since cleared
 
 ReportedMask = 0x00 # MASK_REPORTED_PS | MASK_REPORTED_WU
 
@@ -289,46 +318,22 @@ try:
     LoopCount += 1
 
     try:
-      r = requests.get(WB_URL_JSON)
-      if r.status_code == 200:
+      wb = Wb4Json('now')
+      if wb:
         FailSafe = 0
-        Print('[%02d] wb3   ok' % (LoopCount), 'syslog')
+        Print('[%02d] wb4   ok' % (LoopCount), 'syslog')
         WatchdogReset() # only on the raspberry pi
 
-        wb = r.json()
-
         #------------------------------------------------------------------
-        # determine if the weatherbox3 system has rebooted
+        # determine if the weatherbox4 system has rebooted
         #------------------------------------------------------------------
 
         BootCount = wb['boot.count']
         if RebootsTotal != BootCount:
           if RebootsTotal:
-            Print('[%02d] wb3 reboot %d' % (LoopCount, BootCount), 'permalog')
+            Print('[%02d] wb4 reboot %d' % (LoopCount, BootCount), 'permalog')
           RebootsTotal = BootCount
           RebootsShow += 1
-
-        #------------------------------------------------------------------
-        # determine if the tornado alert unit is responsive.  initial
-        # health is 1, health 0 means unresponsive and 2 means responsive.
-        #------------------------------------------------------------------
-
-        TauQueryReply = wb['tau.queries'] - wb['tau.replies']
-        if TauDelta == TauQueryReply:
-          if TauHealth < 2:
-            TauHealth += 1
-            if TauHealth == 2:
-              Print('[%02d] tau   ok' % (LoopCount), 'permalog')
-            else:
-              Print('[%02d] tau health %d' % (LoopCount, TauHealth), 'permalog')
-        else:
-          if TauHealth:
-            TauHealth -= 1
-            if TauHealth == 0:
-              Print('[%02d] tau dead' % (LoopCount), 'permalog')
-            else:
-              Print('[%02d] tau health %d' % (LoopCount, TauHealth), 'permalog')
-        TauDelta = TauQueryReply
 
         #------------------------------------------------------------------
         # convert celsius to fahrenheit with one decimal precision
@@ -345,7 +350,7 @@ try:
         wb['actual.epoch'] = calendar.timegm(time.strptime(wb['actual.utc'], TimePattern))
 
         #------------------------------------------------------------------
-        # get the weatherbox3 utc time and convert to epoch
+        # get the weatherbox4 utc time and convert to epoch
         #------------------------------------------------------------------
 
         wb['time.utc'] = '%4d-%02d-%02d %02d:%02d:%02d' % (
@@ -355,40 +360,22 @@ try:
         wb['time.epoch'] = calendar.timegm(time.strptime(wb['time.utc'], TimePattern))
 
         #------------------------------------------------------------------
-        # compare the actual and weatherbox3 epochs.  if they differ by
-        # more than 60 seconds, reset the weatherbox3 time to the current
+        # compare the actual and weatherbox4 epochs.  if they differ by
+        # more than 60 seconds, reset the weatherbox4 time to the current
         # time
         #------------------------------------------------------------------
 
         TimeError = abs(wb['time.epoch'] - wb['actual.epoch'])
         if TimeError > 60:
-          TimeSetUrl = '%s?%s' % (WB_URL_TIME, wb['actual.utc'].replace('-','&').replace(' ','&'))
-          Print('[%02d] wb3 time set' % (LoopCount), 'permalog')
+          TimeSetCmd = 'time=' + wb['actual.utc'].replace(' ',',')
+          Print('[%02d] wb4 time set' % (LoopCount), 'permalog')
           try:
-            r = requests.get(TimeSetUrl)
-            if r.status_code == 200:
-              Print('[%02d] wb3   ok' % (LoopCount), 'syslog')
+            if Wb4Json(TimeSetCmd, True):
+              Print('[%02d] wb4   ok' % (LoopCount), 'syslog')
             else:
-              Print('[%02d] wb3 bad %d' % (LoopCount, r.status_code), 'permalog')
+              Print('[%02d] wb4 bad' % (LoopCount), 'permalog')
           except:
-            Print('[%02d] wb3 err' % (LoopCount), 'permalog')
-
-        #------------------------------------------------------------------
-        # if the tau address is not configured on the weatherbox3,
-        # configure it.
-        #------------------------------------------------------------------
-
-        if not wb['tau.set']:
-          Print('[%02d] wb3 tau set' % (LoopCount), 'permalog')
-          try:
-            TauSetUrl = '%s?%s' % (WB_URL_TAU, TAU_ADDRESS)
-            r = requests.get(TauSetUrl)
-            if r.status_code == 200:
-              Print('[%02d] wb3   ok' % (LoopCount), 'syslog')
-            else:
-              Print('[%02d] wb3 bad %d' % (LoopCount, r.status_code), 'permalog')
-          except:
-            Print('[%02d] wb3 err' % (LoopCount), 'permalog')
+            Print('[%02d] wb4 err' % (LoopCount), 'permalog')
 
         #------------------------------------------------------------------
         # display the current json dictionary on the console
@@ -481,8 +468,6 @@ try:
         sql += 'rain_day_in,'
         sql += 'power_volt,'
         sql += 'tau_status,'
-        sql += 'tau_queries,'
-        sql += 'tau_replies,'
         sql += 'log_next,'
         sql += 'log_full,'
         sql += 'reported_mask) VALUES ('
@@ -499,19 +484,17 @@ try:
         sql += '%4.2f,' % wb['rain.day.in'    ]
         sql += '%6.3f,' % wb['power.volt'     ]
         sql += '%d,'    % wb['tau.status'     ]
-        sql += '%d,'    % wb['tau.queries'    ]
-        sql += '%d,'    % wb['tau.replies'    ]
         sql += '%d,'    % wb['log.next'       ]
         sql += '%d,'    % wb['log.full'       ]
         sql += '%d);'   % ReportedMask
         DbExecute('write', sql)
 
-        Print('[%02d] tau=%d dt=%02d %d' % (LoopCount, TauHealth, TimeError, RebootsShow), 'syslog')
+        Print('[%02d] dt=%02d %d' % (LoopCount, TimeError, RebootsShow), 'syslog')
 
       else:
-        Print('[%02d] wb3 bad %d' % (LoopCount, r.status_code), 'permalog')
+        Print('[%02d] wb4 bad %d' % (LoopCount, r.status_code), 'permalog')
     except:
-      Print('[%02d] wb3 err' % (LoopCount), 'permalog')
+      Print('[%02d] wb4 err' % (LoopCount), 'permalog')
 
     Print('[%02d] sleep %d' % (LoopCount, LOOP_TIME_SECS), 'syslog')
 
