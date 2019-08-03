@@ -321,7 +321,7 @@ try:
       wb = Wb4Json('now')
       if wb:
         FailSafe = 0
-        Print('[%02d] wb4   ok' % (LoopCount), 'syslog')
+        Print('[%02d] wb4   ok %d' % (LoopCount, wb['tau.status']), 'syslog')
         WatchdogReset() # only on the raspberry pi
 
         #------------------------------------------------------------------
